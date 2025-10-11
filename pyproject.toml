@@ -1,0 +1,16 @@
+[project]
+name = "twin"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.118.0",
+    "openai>=2.2.0",
+    "python-dotenv>=1.1.1",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.37.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "backend",
+]
