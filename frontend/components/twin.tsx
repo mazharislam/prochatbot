@@ -102,7 +102,7 @@ export default function Twin() {
             }}>
                 <h2 className="text-xl font-semibold flex items-center gap-2">
                     <Bot className="w-6 h-6" />
-                    LinkedIn Profile Chatbot
+                    Professional Profile Chatbot
                 </h2>
                 <p className="text-sm mt-1" style={{ color: 'rgba(191, 219, 254, 0.8)' }}>Powered by AI</p>
             </div>

@@ -41,7 +41,7 @@ export default function Home() {
             <Twin />
           </div>
           <footer className="mt-8 text-center text-sm text-white">
-            <p>LinkedIn Profile Chat Bot Version 1.0</p>
+            <p>Professional Profile Chatbot Version 1.0</p>
           </footer>
         </div>
       </div>
