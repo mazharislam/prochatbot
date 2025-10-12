@@ -69,7 +69,6 @@ export default function Twin() {
             setMessages(prev => [...prev, assistantMessage]);
         } catch (error) {
             console.error('Error:', error);
-            // Add error message
             const errorMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
