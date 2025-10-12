@@ -8,14 +8,8 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-center text-gray-800 mb-2">
             Mazhar Islam
           </h1>
-          <p className="text-center text-gray-600 mb-1">
-            Chat with my AI assistant
-          </p>
-          <h2 className="text-2xl font-semibold text-center text-gray-700 mb-1">
-            LinkedIn Chat Bot
-          </h2>
-          <p className="text-center text-gray-500 mb-8">
-            Ask me anything about my experience, skills, and projects
+          <p className="text-center text-gray-600 mb-8">
+            Chat with my AI assistant about my experience, skills, and projects
           </p>
           <div className="h-[600px]">
             <Twin />
