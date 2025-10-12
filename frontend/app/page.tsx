@@ -1,3 +1,5 @@
+'use client';
+
 import Twin from '@/components/twin';
 
 export default function Home() {
@@ -6,18 +8,21 @@ export default function Home() {
       background: 'linear-gradient(135deg, #0a1929 0%, #1e3a5f 20%, #2563eb 40%, #3b82f6 60%, #60a5fa 80%, #bfdbfe 100%)'
     }}>
       {/* Cyber grid background */}
-      <div className="fixed top-0 left-0 w-full h-full pointer-events-none" style={{
-        backgroundImage: 'linear-gradient(rgba(191, 219, 254, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(191, 219, 254, 0.05) 1px, transparent 1px)',
-        backgroundSize: '50px 50px',
-        animation: 'gridPulse 4s ease-in-out infinite'
-      }}></div>
-      
-      <style jsx>{`
+      <div 
+        className="fixed top-0 left-0 w-full h-full pointer-events-none" 
+        style={{
+          backgroundImage: 'linear-gradient(rgba(191, 219, 254, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(191, 219, 254, 0.05) 1px, transparent 1px)',
+          backgroundSize: '50px 50px',
+          animation: 'gridPulse 4s ease-in-out infinite'
+        }}
+      ></div>
+
+      <style dangerouslySetInnerHTML={{__html: `
         @keyframes gridPulse {
           0%, 100% { opacity: 0.3; }
           50% { opacity: 0.6; }
         }
-      `}</style>
+      `}} />
 
       <div className="container mx-auto px-4 py-8 relative z-10">
         <div className="max-w-4xl mx-auto">
