@@ -51,7 +51,10 @@ export default function Twin() {
                 }),
             });
 
-            if (!response.ok) throw new Error('Failed to send message');
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.detail || 'Failed to send message');
+            }
 
             const data = await response.json();
 
@@ -67,12 +70,20 @@ export default function Twin() {
             };
 
             setMessages(prev => [...prev, assistantMessage]);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error:', error);
+            
+            // Get error message from API response
+            let errorText = 'Sorry, I encountered an error. Please try again.';
+            
+            if (error?.message) {
+                errorText = error.message;
+            }
+            
             const errorMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: 'Sorry, I encountered an error. Please try again.',
+                content: errorText,
                 timestamp: new Date(),
             };
             setMessages(prev => [...prev, errorMessage]);
