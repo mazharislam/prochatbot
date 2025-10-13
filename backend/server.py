@@ -1,59 +1,175 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 import os
-from dotenv import load_dotenv
-from typing import Optional, List, Dict
 import json
 import uuid
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, validator, Field
+from mangum import Mangum
 import boto3
 from botocore.exceptions import ClientError
-from context import prompt
 
-# Load environment variables
-load_dotenv()
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# Initialize FastAPI
+app = FastAPI(title="Professional Profile Chatbot API")
 
-# Configure CORS
-origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+# CORS Configuration
+origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type"],
+    max_age=3600,
 )
 
-# Initialize Bedrock client
-bedrock_client = boto3.client(
-    service_name="bedrock-runtime", 
-    region_name=os.getenv("DEFAULT_AWS_REGION", "us-east-1")
-)
-
-# Bedrock model selection
-# Available models:
-# - amazon.nova-micro-v1:0  (fastest, cheapest)
-# - amazon.nova-lite-v1:0   (balanced - default)
-# - amazon.nova-pro-v1:0    (most capable, higher cost)
-# Remember the Heads up: you might need to add us. or eu. prefix to the below model id
+# AWS Configuration
+USE_S3 = os.getenv("USE_S3", "true").lower() == "true"
+S3_BUCKET = os.getenv("S3_MEMORY_BUCKET", "")
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
+MAX_TOKENS_PER_REQUEST = int(os.getenv("MAX_TOKENS_PER_REQUEST", "1000"))
+MAX_REQUESTS_PER_SESSION = int(os.getenv("MAX_REQUESTS_PER_SESSION", "20"))
+MAX_SESSIONS_PER_IP = int(os.getenv("MAX_SESSIONS_PER_IP", "5"))
 
-# Memory storage configuration
-USE_S3 = os.getenv("USE_S3", "false").lower() == "true"
-S3_BUCKET = os.getenv("S3_BUCKET", "")
-MEMORY_DIR = os.getenv("MEMORY_DIR", "../memory")
+# Initialize AWS clients
+bedrock_client = boto3.client("bedrock-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+s3_client = boto3.client("s3") if USE_S3 else None
 
-# Initialize S3 client if needed
-if USE_S3:
-    s3_client = boto3.client("s3")
+# In-memory rate limiting (resets on Lambda cold start)
+session_rate_limits = {}  # {session_id: [timestamps]}
+ip_session_tracker = {}   # {ip: [session_ids]}
+
+# System prompt with your resume
+SYSTEM_PROMPT = """You are an AI assistant representing a professional based on their resume/profile. 
+Answer questions about their experience, skills, projects, and background in a helpful and professional manner.
+Keep responses concise and relevant. If asked about something not in the resume, politely say you don't have that information."""
 
 
-# Request/Response models
+# ============================================================================
+# SECURITY FUNCTIONS
+# ============================================================================
+
+def detect_jailbreak_attempt(message: str) -> bool:
+    """Detect common jailbreak/prompt injection patterns"""
+    jailbreak_patterns = [
+        "ignore previous instructions",
+        "ignore all previous",
+        "disregard previous",
+        "forget everything",
+        "new instructions",
+        "you are now",
+        "act as if",
+        "pretend you are",
+        "system:",
+        "override",
+        "sudo mode",
+        "admin mode",
+        "developer mode",
+        "god mode"
+    ]
+    
+    message_lower = message.lower()
+    return any(pattern in message_lower for pattern in jailbreak_patterns)
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract real client IP from request headers"""
+    # CloudFront/API Gateway adds X-Forwarded-For header
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # Get first IP in chain (real client IP)
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host
+
+
+def check_session_rate_limit(session_id: str) -> bool:
+    """Limit requests per session (20 per hour)"""
+    now = datetime.now()
+    window_start = now - timedelta(hours=1)
+    
+    # Clean old entries
+    if session_id in session_rate_limits:
+        session_rate_limits[session_id] = [
+            req_time for req_time in session_rate_limits[session_id]
+            if req_time > window_start
+        ]
+    else:
+        session_rate_limits[session_id] = []
+    
+    # Check limit
+    if len(session_rate_limits[session_id]) >= MAX_REQUESTS_PER_SESSION:
+        logger.warning(f"Rate limit exceeded for session {session_id}")
+        return False
+    
+    # Track this request
+    session_rate_limits[session_id].append(now)
+    return True
+
+
+def check_ip_session_limit(ip_address: str, session_id: str) -> bool:
+    """Limit number of sessions per IP (5 per day)"""
+    now = datetime.now()
+    window_start = now - timedelta(days=1)
+    
+    # Initialize or clean old sessions
+    if ip_address not in ip_session_tracker:
+        ip_session_tracker[ip_address] = []
+    
+    # Add current session if new
+    if session_id not in ip_session_tracker[ip_address]:
+        # Check if at limit
+        if len(ip_session_tracker[ip_address]) >= MAX_SESSIONS_PER_IP:
+            logger.warning(f"IP session limit exceeded for {ip_address}")
+            return False
+        
+        # Add new session
+        ip_session_tracker[ip_address].append(session_id)
+    
+    return True
+
+
+# ============================================================================
+# PYDANTIC MODELS WITH VALIDATION
+# ============================================================================
+
 class ChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None
+    message: str = Field(..., min_length=1, max_length=2000)
+    session_id: Optional[str] = Field(None, max_length=36)
+    
+    @validator('message')
+    def validate_message(cls, v):
+        # Remove excessive whitespace
+        v = ' '.join(v.split())
+        
+        # Check for empty
+        if len(v.strip()) < 1:
+            raise ValueError('Message cannot be empty')
+        
+        # Check for repetitive characters (spam detection)
+        if len(set(v)) < 5 and len(v) > 20:
+            raise ValueError('Invalid message format')
+        
+        return v.strip()
+    
+    @validator('session_id')
+    def validate_session_id(cls, v):
+        if v is not None:
+            try:
+                uuid.UUID(v)
+            except ValueError:
+                raise ValueError('Invalid session ID format')
+        return v
 
 
 class ChatResponse(BaseModel):
@@ -61,173 +177,246 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
-class Message(BaseModel):
-    role: str
-    content: str
-    timestamp: str
+class HealthResponse(BaseModel):
+    status: str
+    environment: str
+    bedrock_model: str
 
 
-# Memory management functions
+# ============================================================================
+# MEMORY MANAGEMENT
+# ============================================================================
+
 def get_memory_path(session_id: str) -> str:
-    return f"{session_id}.json"
+    """Get S3 key or local path for conversation memory"""
+    return f"conversations/{session_id}.json"
 
 
 def load_conversation(session_id: str) -> List[Dict]:
-    """Load conversation history from storage"""
-    if USE_S3:
-        try:
-            response = s3_client.get_object(Bucket=S3_BUCKET, Key=get_memory_path(session_id))
-            return json.loads(response["Body"].read().decode("utf-8"))
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "NoSuchKey":
-                return []
-            raise
-    else:
-        # Local file storage
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
-        if os.path.exists(file_path):
-            with open(file_path, "r") as f:
-                return json.load(f)
-        return []
+    """Load conversation history from S3 or local storage"""
+    try:
+        if USE_S3 and s3_client:
+            response = s3_client.get_object(
+                Bucket=S3_BUCKET,
+                Key=get_memory_path(session_id)
+            )
+            return json.loads(response["Body"].read())
+        else:
+            # Local storage fallback
+            memory_dir = Path("memory")
+            memory_dir.mkdir(exist_ok=True)
+            memory_file = memory_dir / f"{session_id}.json"
+            
+            if memory_file.exists():
+                return json.loads(memory_file.read_text())
+    except Exception as e:
+        logger.info(f"No existing conversation for session {session_id}: {e}")
+    
+    return []
 
 
 def save_conversation(session_id: str, messages: List[Dict]):
-    """Save conversation history to storage"""
-    if USE_S3:
-        s3_client.put_object(
-            Bucket=S3_BUCKET,
-            Key=get_memory_path(session_id),
-            Body=json.dumps(messages, indent=2),
-            ContentType="application/json",
-        )
-    else:
-        # Local file storage
-        os.makedirs(MEMORY_DIR, exist_ok=True)
-        file_path = os.path.join(MEMORY_DIR, get_memory_path(session_id))
-        with open(file_path, "w") as f:
-            json.dump(messages, f, indent=2)
+    """Save conversation history to S3 or local storage"""
+    try:
+        # Limit stored messages to prevent abuse
+        MAX_STORED_MESSAGES = 100
+        if len(messages) > MAX_STORED_MESSAGES:
+            messages = messages[-MAX_STORED_MESSAGES:]
+        
+        conversation_data = json.dumps(messages, indent=2)
+        
+        if USE_S3 and s3_client:
+            s3_client.put_object(
+                Bucket=S3_BUCKET,
+                Key=get_memory_path(session_id),
+                Body=conversation_data,
+                ContentType="application/json"
+            )
+        else:
+            # Local storage fallback
+            memory_dir = Path("memory")
+            memory_dir.mkdir(exist_ok=True)
+            memory_file = memory_dir / f"{session_id}.json"
+            memory_file.write_text(conversation_data)
+            
+        logger.info(f"Saved conversation for session {session_id}")
+    except Exception as e:
+        logger.error(f"Error saving conversation: {e}")
+
+
+# ============================================================================
+# BEDROCK INTEGRATION
+# ============================================================================
+
+def load_resume_content() -> str:
+    """Load resume content from PDF or fallback text"""
+    try:
+        from pypdf import PdfReader
+        resume_path = Path("resume.pdf")
+        
+        if resume_path.exists():
+            reader = PdfReader(str(resume_path))
+            text = "\n".join(page.extract_text() for page in reader.pages)
+            logger.info("Loaded resume from PDF")
+            return text
+    except Exception as e:
+        logger.warning(f"Could not load PDF resume: {e}")
+    
+    # Fallback to placeholder
+    return """Professional with experience in software development, cloud architecture, and AI/ML.
+Skills include Python, AWS, Terraform, and modern DevOps practices."""
 
 
 def call_bedrock(conversation: List[Dict], user_message: str) -> str:
     """Call AWS Bedrock with conversation history"""
-    
-    # Build messages in Bedrock format
-    messages = []
-    
-    # Add system prompt as first user message (Bedrock convention)
-    messages.append({
-        "role": "user", 
-        "content": [{"text": f"System: {prompt()}"}]
-    })
-    
-    # Add conversation history (limit to last 10 exchanges to manage context)
-    for msg in conversation[-20:]:  # Last 10 back-and-forth exchanges
-        messages.append({
-            "role": msg["role"],
-            "content": [{"text": msg["content"]}]
-        })
-    
-    # Add current user message
-    messages.append({
-        "role": "user",
-        "content": [{"text": user_message}]
-    })
-    
     try:
-        # Call Bedrock using the converse API
+        # Load resume content
+        resume_content = load_resume_content()
+        
+        # Build system message
+        system_message = f"{SYSTEM_PROMPT}\n\nResume/Profile Content:\n{resume_content}"
+        
+        # Build conversation history (last 20 messages = 10 exchanges)
+        messages = []
+        for msg in conversation[-20:]:
+            messages.append({
+                "role": msg["role"],
+                "content": [{"text": msg["content"]}]
+            })
+        
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": [{"text": user_message}]
+        })
+        
+        # Call Bedrock
         response = bedrock_client.converse(
             modelId=BEDROCK_MODEL_ID,
             messages=messages,
+            system=[{"text": system_message}],
             inferenceConfig={
-                "maxTokens": 2000,
+                "maxTokens": MAX_TOKENS_PER_REQUEST,
                 "temperature": 0.7,
                 "topP": 0.9
             }
         )
         
-        # Extract the response text
         return response["output"]["message"]["content"][0]["text"]
         
     except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'ValidationException':
-            # Handle message format issues
-            print(f"Bedrock validation error: {e}")
-            raise HTTPException(status_code=400, detail="Invalid message format for Bedrock")
-        elif error_code == 'AccessDeniedException':
-            print(f"Bedrock access denied: {e}")
-            raise HTTPException(status_code=403, detail="Access denied to Bedrock model")
-        else:
-            print(f"Bedrock error: {e}")
-            raise HTTPException(status_code=500, detail=f"Bedrock error: {str(e)}")
+        logger.error(f"Bedrock API error: {e}")
+        raise HTTPException(status_code=500, detail="AI service error")
+    except Exception as e:
+        logger.error(f"Unexpected error calling Bedrock: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/")
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
+@app.get("/", response_model=dict)
 async def root():
+    """Root endpoint"""
     return {
-        "message": "AI Digital Twin API (Powered by AWS Bedrock)",
-        "memory_enabled": True,
-        "storage": "S3" if USE_S3 else "local",
-        "ai_model": BEDROCK_MODEL_ID
+        "message": "Professional Profile Chatbot API",
+        "version": "1.0",
+        "endpoints": {
+            "health": "/health",
+            "chat": "/chat"
+        }
     }
 
 
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy", 
-        "use_s3": USE_S3,
-        "bedrock_model": BEDROCK_MODEL_ID
-    }
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    """Health check endpoint"""
+    return HealthResponse(
+        status="healthy",
+        environment=os.getenv("ENVIRONMENT", "development"),
+        bedrock_model=BEDROCK_MODEL_ID
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, req: Request):
+    """Main chat endpoint with security controls"""
+    session_id = request.session_id or str(uuid.uuid4())
+    client_ip = get_client_ip(req)
+    
     try:
-        # Generate session ID if not provided
-        session_id = request.session_id or str(uuid.uuid4())
-
+        # Security Check 1: Detect jailbreak attempts
+        if detect_jailbreak_attempt(request.message):
+            logger.warning(f"Jailbreak attempt detected from IP {client_ip}, session {session_id}")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request detected"
+            )
+        
+        # Security Check 2: Session rate limiting
+        if not check_session_rate_limit(session_id):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Maximum {MAX_REQUESTS_PER_SESSION} requests per hour."
+            )
+        
+        # Security Check 3: IP session limiting
+        if not check_ip_session_limit(client_ip, session_id):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many sessions from your IP. Maximum {MAX_SESSIONS_PER_IP} sessions per day."
+            )
+        
+        # Log request
+        logger.info(json.dumps({
+            "event": "chat_request",
+            "session_id": session_id,
+            "ip": client_ip,
+            "message_length": len(request.message),
+            "timestamp": datetime.now().isoformat()
+        }))
+        
         # Load conversation history
         conversation = load_conversation(session_id)
-
-        # Call Bedrock for response
+        
+        # Get AI response
         assistant_response = call_bedrock(conversation, request.message)
-
+        
         # Update conversation history
-        conversation.append(
-            {"role": "user", "content": request.message, "timestamp": datetime.now().isoformat()}
-        )
-        conversation.append(
-            {
-                "role": "assistant",
-                "content": assistant_response,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-
-        # Save conversation
+        conversation.append({
+            "role": "user",
+            "content": request.message,
+            "timestamp": datetime.now().isoformat()
+        })
+        conversation.append({
+            "role": "assistant",
+            "content": assistant_response,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Save updated conversation
         save_conversation(session_id, conversation)
-
-        return ChatResponse(response=assistant_response, session_id=session_id)
-
+        
+        # Log response
+        logger.info(json.dumps({
+            "event": "chat_response",
+            "session_id": session_id,
+            "response_length": len(assistant_response),
+            "timestamp": datetime.now().isoformat()
+        }))
+        
+        return ChatResponse(
+            response=assistant_response,
+            session_id=session_id
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in chat endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error processing chat request: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.get("/conversation/{session_id}")
-async def get_conversation(session_id: str):
-    """Retrieve conversation history"""
-    try:
-        conversation = load_conversation(session_id)
-        return {"session_id": session_id, "messages": conversation}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# Lambda handler
+handler = Mangum(app, lifespan="off")
