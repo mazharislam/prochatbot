@@ -70,13 +70,13 @@ export default function Twin() {
             };
 
             setMessages(prev => [...prev, assistantMessage]);
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Error:', error);
             
             // Get error message from API response
             let errorText = 'Sorry, I encountered an error. Please try again.';
             
-            if (error?.message) {
+            if (error instanceof Error && error.message) {
                 errorText = error.message;
             }
             
