@@ -1,7 +1,11 @@
 # Resume/Personal Documents
+@"
+# Resume/Personal Documents (personal content stays in S3)
+backend/data/*.pdf
+backend/data/style.txt
+backend/data/summary.txt
 backend/backup/
-*.pdf
-echo "*.backup*" >> .gitignore
+*.backup*
 
 # Terraform
 *.tfstate
@@ -44,3 +48,4 @@ Thumbs.db
 
 # AWS
 .aws/
+"@ | Out-File -FilePath .gitignore -Encoding utf8 -NoNewline
