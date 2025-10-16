@@ -466,8 +466,6 @@ Found a vulnerability? Report it responsibly:
 3. Or email: security@yourdomain.com
 4. Include: Description, reproduction steps, potential impact
 
-See [SECURITY.md](SECURITY.md) for complete security policy and response timeline.
-
 ---
 
 **Last Security Audit:** October 2025  
