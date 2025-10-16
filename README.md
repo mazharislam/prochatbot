@@ -447,36 +447,6 @@ aws logs get-log-events \
 
 ---
 
-## 🗺️ Roadmap
-
-### Version 1.0 ✅ (Current)
-- [x] Serverless architecture with AWS Bedrock
-- [x] CI/CD pipeline with GitHub Actions
-- [x] Enterprise security controls
-- [x] Session management
-- [x] S3-based document storage
-- [x] CloudFront CDN distribution
-
-### Version 2.0 🚧 (Planned)
-- [ ] RAG with vector database (pgvector)
-- [ ] Semantic search across documents
-- [ ] Citation-backed responses
-- [ ] Multi-model support (Bedrock/GPT/Claude)
-
-### Version 3.0 📋 (Future)
-- [ ] Security/Compliance assistant variant
-- [ ] MITRE ATT&CK integration
-- [ ] Risk assessment automation
-- [ ] Compliance mapping (NIST, HIPAA, PCI-DSS)
-
-### Version 4.0 🔮 (Future)
-- [ ] Production observability dashboard
-- [ ] Cost optimization analytics
-- [ ] A/B testing framework
-- [ ] Advanced monitoring and alerting
-
----
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please follow these steps:
