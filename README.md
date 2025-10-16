@@ -117,7 +117,11 @@ backend/data/
 ├── summary.txt         # Professional identity and background
 ├── linkedin.pdf        # LinkedIn profile export (optional)
 ├── aboutme.pdf         # Personal statement (optional)
-└── resume1.pdf         # Primary resume (optional)
+└── resume1.pdf         # Primary resume (optional up to 5 resume variations)
+└── resume2.pdf         # Primary resume (optional)
+└── resume3.pdf         # Primary resume (optional)
+└── resume4.pdf         # Primary resume (optional)
+└── resume5.pdf         # Primary resume (optional)
 ```
 
 Upload to S3:
@@ -459,6 +463,18 @@ aws logs get-log-events \
 - [ ] Citation-backed responses
 - [ ] Multi-model support (Bedrock/GPT/Claude)
 
+### Version 3.0 📋 (Future)
+- [ ] Security/Compliance assistant variant
+- [ ] MITRE ATT&CK integration
+- [ ] Risk assessment automation
+- [ ] Compliance mapping (NIST, HIPAA, PCI-DSS)
+
+### Version 4.0 🔮 (Future)
+- [ ] Production observability dashboard
+- [ ] Cost optimization analytics
+- [ ] A/B testing framework
+- [ ] Advanced monitoring and alerting
+
 ---
 
 ## 🤝 Contributing
@@ -509,7 +525,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 If you found this project interesting or useful:
 
 - 💼 **[Connect with me on LinkedIn](https://www.linkedin.com/in/mazhar-islam)** - Let's discuss cloud architecture, AI, and cybersecurity!
-- 💬 **[Comment on my LinkedIn post](https://www.linkedin.com/feed/update/urn:li:activity:YOUR_POST_ID)** - Share your thoughts, questions, or feedback about this project
+- 💬 **[Comment on my LinkedIn post](https://www.linkedin.com/posts/activity-7384507814481735681-wPMD?utm_source=share&utm_medium=member_desktop&rcm=ACoAAAKuvEoBMvqWBH53biowTucCWGHzlE8jTNg)** - Share your thoughts, questions, or feedback about this project
 - ⭐ **Star this repository** - It helps others discover the project
 - 🔄 **Share with your network** - Help spread knowledge about serverless AI architectures
 
@@ -524,7 +540,15 @@ I'm always interested in discussing:
 
 ## ⚠️ Disclaimer
 
-This is a portfolio/demonstration project showcasing cloud architecture, AI integration, and security best practices. While it implements security controls, please review and customize security measures for your specific production requirements.
+This is a portfolio/demonstration project, but it's been thoroughly security-hardened 
+with industry best practices. It includes:
+
+- ✅ Zero committed credentials (verified across git history)
+- ✅ OIDC authentication (no long-lived AWS keys)
+- ✅ Least-privilege IAM policies
+- ✅ Encrypted data storage and encrypted transit
+
+**For production use:** Review the [SECURITY.md](SECURITY.md) audit and adapt controls to your specific compliance requirements (SOC 2, GDPR, etc.). Security is contextual and adjustment may be needed for your threat model and regulatory environment.
 
 ---
 
